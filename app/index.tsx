@@ -1,7 +1,9 @@
-import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
-import { useState, useRef, useEffect } from 'react';
 import { Button, StyleSheet, Text, TouchableOpacity, View, Image, Alert } from 'react-native';
 import { Platform } from 'react-native';
+import { router } from 'expo-router';
+import * as FileSystem from 'expo-file-system';
+import { useEffect, useRef, useState } from 'react';
+import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
 
 export default function CameraScreen() {
   const [facing, setFacing] = useState<CameraType>('back');
@@ -9,7 +11,6 @@ export default function CameraScreen() {
   const [photo, setPhoto] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const cameraRef = useRef<CameraView>(null);
-
 
   // Check if API is running
   const checkApiStatus = async () => {
@@ -56,18 +57,27 @@ export default function CameraScreen() {
   const uploadPhoto = async () => {
     if (!photo) return;
 
+    console.log('Original photo URI:', photo);
     setIsUploading(true);
     try {
+      // Use a fixed filename to always override the previous photo
+      const filename = 'current_menu.jpg';
+      const newPath = `${FileSystem.documentDirectory}${filename}`;
+      await FileSystem.copyAsync({
+        from: photo,
+        to: newPath
+      });
+
+      console.log('Saved photo to:', newPath);
+
       const formData = new FormData();
-
-      // Mobile photo handling - just append the file URI
+      const photoUri = Platform.OS === 'ios' ? newPath.replace('file://', '') : newPath;
+      
       formData.append('file', {
-        uri: Platform.OS === 'ios' ? photo.replace('file://', '') : photo,
+        uri: photoUri,
         type: 'image/jpeg',
-        name: 'photo.jpg',
+        name: filename,
       } as any);
-
-      console.log('Uploading photo:', photo);
 
       const response = await fetch('http://10.6.223.44:8000/upload', {
         method: 'POST',
@@ -79,22 +89,29 @@ export default function CameraScreen() {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Server error:', errorText);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const result = await response.json();
+      const resultData = await response.json();
 
-      if (result.success) {
-        Alert.alert('Success', 'Image uploaded successfully');
-        console.log('Translated text:', result.translated_text);
-      } else {
-        Alert.alert('Error', result.message || 'Failed to upload image');
-      }
+      console.log('Result data:', resultData);
+      
+      console.log('URI being passed to result screen:', newPath);
+
+      router.push({
+        pathname: '/result',
+        params: {
+          imageUri: newPath,
+          resultData: JSON.stringify(resultData)
+        }
+      });
+
     } catch (error) {
       console.error('Upload error:', error);
-      Alert.alert('Error', 'Failed to connect to the server');
+      Alert.alert(
+        'Error',
+        'Failed to process the image. Please try again.'
+      );
     } finally {
       setIsUploading(false);
     }
@@ -104,7 +121,9 @@ export default function CameraScreen() {
     <View style={styles.container}>
       {photo ? (
         <View style={styles.previewContainer}>
-          <Image source={{ uri: photo }} style={styles.preview} />
+          <View style={{ width: '90%', height: '70%' }}>
+            <Image source={{ uri: photo }} style={styles.preview} />
+          </View>
           <View style={styles.previewButtonsContainer}>
             <Button
               title="Retake"
@@ -119,14 +138,20 @@ export default function CameraScreen() {
           </View>
         </View>
       ) : (
-        <CameraView style={styles.camera} facing={facing} ref={cameraRef}>
-          <View style={styles.buttonContainer}>
-            <TouchableOpacity style={styles.flipButton} onPress={toggleCameraFacing}>
-              <Text style={styles.buttonText}>↻ Flip</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.captureButton} onPress={takePicture} />
-          </View>
-        </CameraView>
+        <View style={{ flex: 1 }}>
+          <CameraView 
+            style={styles.camera} 
+            facing={facing} 
+            ref={cameraRef}
+          >
+            <View style={styles.buttonContainer}>
+              <TouchableOpacity style={styles.flipButton} onPress={toggleCameraFacing}>
+                <Text style={styles.buttonText}>↻ Flip</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.captureButton} onPress={takePicture} />
+            </View>
+          </CameraView>
+        </View>
       )}
     </View>
   );
@@ -174,10 +199,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   preview: {
-    width: '90%',
-    height: '70%',
+    width: '100%',
+    height: '100%',
     borderRadius: 10,
-    marginBottom: 20,
   },
   previewButtonsContainer: {
     flexDirection: 'row',
